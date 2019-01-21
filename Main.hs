@@ -1,7 +1,7 @@
 module Main where
 
-	import HaskileSystem
-	
-	main::IO()
-	main = do
-		HaskileSystem.run
+ import HaskileSystem
+
+ main :: IO()
+ main = do
+    HaskileSystem.run
