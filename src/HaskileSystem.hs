@@ -5,6 +5,7 @@ where
 
   import System.IO
   import Data.List (find)
+  import Data.Maybe (isNothing)
   import Component
   import Helper
 
@@ -126,7 +127,7 @@ where
                 alteringFunction
       where
         errorFunction contents =
-          not $ null (filter (\c -> name c == newDirName) contents)
+          not $ isNothing (find (\c -> name c == newDirName) contents)
 
         errorMessage = ": Already exists in this Directory"
 
@@ -145,7 +146,7 @@ where
                 alteringFunction
       where
         errorFunction contents =
-          not $ null (filter (\c -> name c == newFileName) contents)
+          not $ isNothing (find (\c -> name c == newFileName) contents)
 
         errorMessage = ": Already exists in this Directory"
 
@@ -157,8 +158,8 @@ where
               newFile = File newFileName []
               newObjectiveDir = Directory oName $ [newObjectiveDir, parentDir] ++ objDirContentsWithLinks ++ [newFile]
 
-  rm :: Component -> Component -> String -> Either String (Component, Component)
-  rm rootDir objectiveDir fileName =
+  rm' :: Component -> Component -> String -> Either String (Component, Component)
+  rm' rootDir objectiveDir fileName =
       alterTree rootDir objectiveDir fileName
                 errorFunction errorMessage
                 alteringFunction
@@ -171,18 +172,41 @@ where
                   otherwise -> False
 
         errorFunction contents =
-          null (filter (\c -> match c fileName) contents)
+          (name rootDir) == (name objectiveDir) && isNothing (find (\c -> match c fileName) contents)
 
-        errorMessage = ": file does not exists"
+        errorMessage = ": file does not exist"
 
         alteringFunction :: Component -> Component -> String -> Component
         alteringFunction (Directory oName oContent) parentDir newFileName =
             newObjectiveDir
             where
-
               objDirContentsWithLinks = drop 2 oContent
               filteredCurrDirContentWithoutLinks = filter (\c -> not (match c fileName)) objDirContentsWithLinks
               newObjectiveDir = Directory oName $ [newObjectiveDir, parentDir] ++ filteredCurrDirContentWithoutLinks
+
+  rm :: Component -> Component -> [String] -> Either String (Component, Component)
+  rm root wd [] = Right (root, wd)
+  rm root wd (fp:fps) =
+      result
+      where
+        (s, ss) = break (\d -> d /= '/') fp
+        pathTokens =
+            case s of
+              "/"       -> s:(Helper.splitStrBy '/' ss)
+              otherwise -> Helper.splitStrBy '/' fp
+        (path, (fileName:_)) = splitAt ((length pathTokens) - 1) pathTokens
+        result = case cd root wd path of
+          (Right newWd) ->
+            case rm' root newWd fileName of
+                  (Right (root', wd')) ->
+                    rm root' wd'' fps
+                    where
+                      (root'', dirs) = break (\c -> c /= '/') $ pwd root wd
+                      tokenizedPath = root'': Helper.splitStrBy '/' dirs
+                      wd'' = case cd root' root' tokenizedPath of
+                                  (Right dir) -> dir
+                  (Left e) -> Left e
+          (Left e) -> Left e
 
   handleInput :: [String] -> Component -> Component -> IO (Either String (Component, Component))
   handleInput inputTokens root wd = do
@@ -214,7 +238,7 @@ where
                 "mkfile" -> do
                   return $ mkfile root wd args'
                 "rm" -> do
-                  return $ rm root wd args'
+                  return $ rm root wd args
                 otherwise -> do
                   putStrLn $ "Unknown command."
                   return $ Right(root, wd)
