@@ -120,43 +120,27 @@ where
                 Right (newRoot, newWd)
             (Left e) -> Left e
 
-  mkdir :: Component -> Component -> String -> Either String (Component, Component)
-  mkdir rootDir objectiveDir newDirName =
-      alterTree rootDir objectiveDir newDirName
+  mk :: Component -> Component -> String -> String -> Either String (Component, Component)
+  mk rootDir objectiveDir compType newCompName =
+      alterTree rootDir objectiveDir newCompName
                 (errorFunction) errorMessage
                 alteringFunction
       where
         errorFunction contents =
-          not $ isNothing (find (\c -> name c == newDirName) contents)
+          not $ isNothing (find (\c -> name c == newCompName) contents)
 
         errorMessage = ": Already exists in this Directory"
 
         alteringFunction :: Component -> Component -> String -> Component
-        alteringFunction (Directory oName oContent) parentDir newDirName =
+        alteringFunction (Directory oName oContent) parentDir newCompName =
             newObjectiveDir
             where
               objDirContentsWithLinks = drop 2 oContent
-              newDir = Directory newDirName [newDir, newObjectiveDir]
-              newObjectiveDir = Directory oName $ [newObjectiveDir, parentDir] ++ objDirContentsWithLinks ++ [newDir]
-
-  mkfile :: Component -> Component -> String -> Either String (Component, Component)
-  mkfile rootDir objectiveDir newFileName =
-      alterTree rootDir objectiveDir newFileName
-                (errorFunction) errorMessage
-                alteringFunction
-      where
-        errorFunction contents =
-          not $ isNothing (find (\c -> name c == newFileName) contents)
-
-        errorMessage = ": Already exists in this Directory"
-
-        alteringFunction :: Component -> Component -> String -> Component
-        alteringFunction (Directory oName oContent) parentDir newFileName =
-            newObjectiveDir
-            where
-              objDirContentsWithLinks = drop 2 oContent
-              newFile = File newFileName []
-              newObjectiveDir = Directory oName $ [newObjectiveDir, parentDir] ++ objDirContentsWithLinks ++ [newFile]
+              newComponent =
+                case compType of
+                  "dir" -> Directory newCompName [newComponent, newObjectiveDir]
+                  "file" -> File newCompName []
+              newObjectiveDir = Directory oName $ [newObjectiveDir, parentDir] ++ objDirContentsWithLinks ++ [newComponent]
 
   rm' :: Component -> Component -> String -> Either String (Component, Component)
   rm' rootDir objectiveDir fileName =
@@ -234,9 +218,9 @@ where
                   putStrLn $ pwd root wd
                   return $ Right (root, wd)
                 "mkdir" -> do
-                  return $ mkdir root wd args'
+                  return $ mk root wd "dir" args'
                 "mkfile" -> do
-                  return $ mkfile root wd args'
+                  return $ mk root wd "file" args'
                 "rm" -> do
                   return $ rm root wd args
                 otherwise -> do
