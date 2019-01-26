@@ -22,15 +22,15 @@ where
       inputTokens <- readInput $ name wd
       result <- handleInput inputTokens root wd
       case result of
-          (Right dir) -> loop root dir
+          (Right (root', wd')) -> loop root' wd'
           (Left e) -> do
             putStrLn e
             loop root wd
 
   pwd :: Component -> Component -> String
-  pwd _ (Directory "/" _) = ""
+  pwd _ (Directory "/" _) = "/"
   pwd root wd =
-      pwd root parentDir ++ "/" ++ name wd
+      pwd root parentDir ++ name wd ++ "/"
       where parentDir = case cd root wd [".."] of
                           (Right dir) -> dir
   
@@ -41,8 +41,8 @@ where
           (Left e)    -> e
 
   cd :: Component -> Component -> [String] -> Either String Component
-  cd root wd  []         = Right wd
-  cd root wd  (dir:dirs) =
+  cd root wd []         = Right wd
+  cd root wd (dir:dirs) =
       case dir of
         "/" -> cd root root dirs
         otherwise ->
@@ -60,89 +60,131 @@ where
                   (File _ _) -> Left $ dir ++ ": Is a File."
                   otherwise  -> cd root comp dirs
 
-  mkdir :: Component -> Component -> String -> Either String Component
-  mkdir rootDir childDir newDirName =
-      ncd
-        where
+  alterTree :: Component -> Component -> String ->
+               ([Component] -> Bool) -> String ->
+               (Component -> Component -> String -> Component) ->
+               Either String(Component, Component)
+  alterTree rootDir objectiveDir componentName
+            errorFunction errorMessage
+            alteringFunction =
+      ngd
+      where
+        -- return a new rootDir directory which contains
+        -- the altered specified directory
+        innerAlterTree :: Component -> Component -> Component -> String ->
+                          ([Component] -> Bool) -> String ->
+                          (Component -> Component -> String -> Component) ->
+                          Either String Component
 
-          -- return a new rootDir directory which contains
-          -- the newly created directory at the specified node
-          innerMkdir :: Component -> Component -> String -> Either String Component
-          innerMkdir f@(File fName fContents)   _        _           = Right f
-          innerMkdir (Directory pName pContent) c@(Directory cName cContent) newDirName
-            | not $ null (filter (\c -> name c == newDirName) cContent) =
-                Left $ newDirName ++ ": Already exists in this Directory"
-            | pName == cName = Right newDir' -- if we've reached the directory
-                                       -- which contents we're changing by adding a new directory,
-                                       -- we reconstruct it and add the new directory to it
+        innerAlterTree f@(File fName fContents) _ _ _ _ _ _ = Right f
 
-            | otherwise      = Right $ Directory pName $ map (\c' -> newContent c') pContent
+        innerAlterTree currDir@(Directory cName cContent) parentDir objectiveDir@(Directory oName oContent) componentName
+                       errorFunction errorMessage
+                       alteringFunction
+            | errorFunction cContent == True =
+                  Left $ componentName ++ errorMessage
+            | cName == oName = Right newObjectiveDir  -- if we've reached the directory
+                                                      -- which contents we're changing,
+                                                      -- we reconstruct it with the changes we have to make
+
+            | otherwise = Right newCurrDir
             where
-                newContent c' =
-                  case innerMkdir c' c newDirName of
-                    (Right dir) -> dir
+              currDirContentWithoutLinks = drop 2 cContent
+              newCurrDirLinks = [newCurrDir, parentDir]
+              newCurrDirContentWithoutLinks = map (\c' -> newContent c') currDirContentWithoutLinks
+              newCurrDir = Directory cName $ newCurrDirLinks ++ newCurrDirContentWithoutLinks
+              newContent c' =
+                case innerAlterTree c' newCurrDir objectiveDir componentName
+                                    errorFunction errorMessage
+                                    alteringFunction of
+                  (Right dir) -> dir
 
-                -- reconstruct the rootDir and add the new directory
-                newDir'  = Directory cName $ cContent ++ [newDir'']
+              newObjectiveDir = alteringFunction objectiveDir parentDir componentName
 
-                newDir'' = Directory newDirName [ newDir'' -- link to itself. Mimics the '.' dir.
-                                                , newDir'  -- link to it's parent. Mimics the '..' dir.
-                                                ]
+        -- contains the path to the directory we altered
+        (root, dirs) = break (\c -> c /= '/') $ pwd rootDir objectiveDir
+        tokenizedPath = root: Helper.splitStrBy '/' dirs
 
-          -- contains the path to the directory in which we created the new directory
-          tokenizedPath = Helper.splitStrBy '/' $ pwd rootDir childDir
+        -- New Objective Directory
+        -- This is the directory in the new tree
+        -- which has the same path as objectiveDir in the old tree
+        ngd =
+          case innerAlterTree rootDir rootDir objectiveDir componentName
+                              errorFunction errorMessage
+                              alteringFunction of
+            (Right newRoot) ->
+              let newWd = case cd newRoot newRoot tokenizedPath of
+                                  (Right dir) -> dir
+              in
+                Right (newRoot, newWd)
+            (Left e) -> Left e
 
-          -- New Child Directory
-          -- This is the directory in the new tree
-          -- which has the same path as childDir in the old tree
-          ncd =
-            case innerMkdir rootDir childDir newDirName of
-              (Right newRoot) -> cd newRoot newRoot tokenizedPath
-              (Left e) -> Left e
+  mkdir :: Component -> Component -> String -> Either String (Component, Component)
+  mkdir rootDir objectiveDir newDirName =
+      alterTree rootDir objectiveDir newDirName
+                (errorFunction) errorMessage
+                alteringFunction
+      where
+        errorFunction contents =
+          not $ null (filter (\c -> name c == newDirName) contents)
 
-  rm:: Component -> Component -> String -> Either String Component
-  rm rootDir childDir fileName =
-    ncd
-        where
+        errorMessage = ": Already exists in this Directory"
 
-          -- return a new rootDir directory 
-          -- which does not contain
-          -- the specified file
-          innerRm :: Component -> Component -> String -> Either String Component
-          innerRm f@(File fName fContents)   _        _           = Right f
-          innerRm (Directory pName pContent) c@(Directory cName cContent) fileName
-            | null (filter (\c -> name c == fileName) cContent) =
-                Left $ fileName ++ ": No such File"
-            | pName == cName = Right newDir' -- if we've reached the directory
-                                             -- which contents we're changing by removing a file,
-                                             -- we reconstruct it and remove the file
-
-            | otherwise = Right $ Directory pName $ map (\c' -> newContent c') pContent
+        alteringFunction :: Component -> Component -> String -> Component
+        alteringFunction (Directory oName oContent) parentDir newDirName =
+            newObjectiveDir
             where
-                newContent c' =
-                  case innerRm c' c fileName of
-                    (Right dir) -> dir
+              objDirContentsWithLinks = drop 2 oContent
+              newDir = Directory newDirName [newDir, newObjectiveDir]
+              newObjectiveDir = Directory oName $ [newObjectiveDir, parentDir] ++ objDirContentsWithLinks ++ [newDir]
 
-                isNotFileWithName comp name' = 
-                  case comp of
-                    (File name' _) -> False
-                    otherwise -> True
+  mkfile :: Component -> Component -> String -> Either String (Component, Component)
+  mkfile rootDir objectiveDir newFileName =
+      alterTree rootDir objectiveDir newFileName
+                (errorFunction) errorMessage
+                alteringFunction
+      where
+        errorFunction contents =
+          not $ null (filter (\c -> name c == newFileName) contents)
 
-                -- reconstruct the rootDir and remove the specified file
-                newDir'  = Directory cName $ filter (\c -> isNotFileWithName c fileName ) cContent
+        errorMessage = ": Already exists in this Directory"
 
-          -- contains the path to the directory in which we created the new directory
-          tokenizedPath = Helper.splitStrBy '/' $ pwd rootDir childDir
+        alteringFunction :: Component -> Component -> String -> Component
+        alteringFunction (Directory oName oContent) parentDir newFileName =
+            newObjectiveDir
+            where
+              objDirContentsWithLinks = drop 2 oContent
+              newFile = File newFileName []
+              newObjectiveDir = Directory oName $ [newObjectiveDir, parentDir] ++ objDirContentsWithLinks ++ [newFile]
 
-          -- New Child Directory
-          -- This is the directory in the new tree
-          -- which has the same path as childDir in the old tree
-          ncd =
-            case innerRm rootDir childDir fileName of
-              (Right newRoot) -> cd newRoot newRoot tokenizedPath
-              (Left e) -> Left e
+  rm :: Component -> Component -> String -> Either String (Component, Component)
+  rm rootDir objectiveDir fileName =
+      alterTree rootDir objectiveDir fileName
+                errorFunction errorMessage
+                alteringFunction
 
-  handleInput :: [String] -> Component -> Component -> IO (Either String Component)
+      where
+        match :: Component -> String -> Bool
+        match c fName = 
+                case c of
+                  (File fName _) -> True
+                  otherwise -> False
+
+        errorFunction contents =
+          null (filter (\c -> match c fileName) contents)
+
+        errorMessage = ": file does not exists"
+
+        alteringFunction :: Component -> Component -> String -> Component
+        alteringFunction (Directory oName oContent) parentDir newFileName =
+            newObjectiveDir
+            where
+
+              objDirContentsWithLinks = drop 2 oContent
+              filteredCurrDirContentWithoutLinks = filter (\c -> not (match c fileName)) objDirContentsWithLinks
+              newObjectiveDir = Directory oName $ [newObjectiveDir, parentDir] ++ filteredCurrDirContentWithoutLinks
+
+  handleInput :: [String] -> Component -> Component -> IO (Either String (Component, Component))
   handleInput inputTokens root wd = do
       case inputTokens of
         (command:args) ->
@@ -158,21 +200,26 @@ where
             in
               case command of
                 "cd" -> do
-                  return $ cd root wd pathTokens
+                  return $ case cd root wd pathTokens of
+                        (Right dir) -> Right (root, dir)
+                        (Left e) -> Left e
                 "ls" -> do
                   putStrLn $ HaskileSystem.ls root wd pathTokens;
-                  return $ Right wd
+                  return $ Right (root, wd)
                 "pwd" -> do
                   putStrLn $ pwd root wd
-                  return $ Right wd
+                  return $ Right (root, wd)
                 "mkdir" -> do
                   return $ mkdir root wd args'
+                "mkfile" -> do
+                  return $ mkfile root wd args'
                 "rm" -> do
                   return $ rm root wd args'
                 otherwise -> do
-                  return $ Right wd
+                  putStrLn $ "Unknown command."
+                  return $ Right(root, wd)
         otherwise -> do
-            return $ Right wd
+            return $ Right (root, wd)
 
   tokenizeInput :: String -> [String]
   tokenizeInput input = Helper.splitStrBy ' ' input
