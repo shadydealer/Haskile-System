@@ -62,7 +62,7 @@ where
                   otherwise  -> cd root comp dirs
 
   alterTree :: Component -> Component -> String ->
-               ([Component] -> Bool) -> String ->
+               (Component -> [Component] -> Bool) -> String ->
                (Component -> Component -> String -> Component) ->
                Either String(Component, Component)
   alterTree rootDir objectiveDir componentName
@@ -73,7 +73,7 @@ where
         -- return a new rootDir directory which contains
         -- the altered specified directory
         innerAlterTree :: Component -> Component -> Component -> String ->
-                          ([Component] -> Bool) -> String ->
+                          (Component -> [Component] -> Bool) -> String ->
                           (Component -> Component -> String -> Component) ->
                           Either String Component
 
@@ -82,7 +82,7 @@ where
         innerAlterTree currDir@(Directory cName cContent) parentDir objectiveDir@(Directory oName oContent) componentName
                        errorFunction errorMessage
                        alteringFunction
-            | errorFunction cContent == True =
+            | errorFunction currDir cContent == True =
                   Left $ componentName ++ errorMessage
             | cName == oName = Right newObjectiveDir  -- if we've reached the directory
                                                       -- which contents we're changing,
@@ -93,12 +93,13 @@ where
               currDirContentWithoutLinks = drop 2 cContent
               newCurrDirLinks = [newCurrDir, parentDir]
               newCurrDirContentWithoutLinks = map (\c' -> newContent c') currDirContentWithoutLinks
-              newCurrDir = Directory cName $ newCurrDirLinks ++ newCurrDirContentWithoutLinks
+              newCurrDir = Directory cName $  newCurrDirLinks ++ newCurrDirContentWithoutLinks
               newContent c' =
                 case innerAlterTree c' newCurrDir objectiveDir componentName
                                     errorFunction errorMessage
                                     alteringFunction of
                   (Right dir) -> dir
+                  (Left e) -> c'
 
               newObjectiveDir = alteringFunction objectiveDir parentDir componentName
 
@@ -121,13 +122,14 @@ where
             (Left e) -> Left e
 
   mk :: Component -> Component -> String -> String -> Either String (Component, Component)
+  mk rootDir objectiveDir _        [] = Right (rootDir, objectiveDir)
   mk rootDir objectiveDir compType newCompName =
       alterTree rootDir objectiveDir newCompName
                 (errorFunction) errorMessage
                 alteringFunction
       where
-        errorFunction contents =
-          not $ isNothing (find (\c -> name c == newCompName) contents)
+        errorFunction currDir contents =
+         (name currDir) == (name objectiveDir) && (not $ isNothing (find (\c -> name c == newCompName) contents))
 
         errorMessage = ": Already exists in this Directory"
 
@@ -155,8 +157,8 @@ where
                   (File fName _) -> True
                   otherwise -> False
 
-        errorFunction contents =
-          (name rootDir) == (name objectiveDir) && isNothing (find (\c -> match c fileName) contents)
+        errorFunction currDir contents =
+          (name currDir) == (name objectiveDir) && isNothing (find (\c -> match c fileName) contents)
 
         errorMessage = ": file does not exist"
 
@@ -197,14 +199,12 @@ where
       case inputTokens of
         (command:args) ->
           let
-            (args':_) = args 
+            (args':_) = if null args then [""] else args
             (s, ss)    = break (\d -> d /= '/') args'
             pathTokens =
-                if not $ null args
-                then case s of
-                        "/"       -> s:(Helper.splitStrBy '/' ss)
-                        otherwise -> Helper.splitStrBy '/' args'
-                else []
+                case s of
+                  "/"       -> s:(Helper.splitStrBy '/' ss)
+                  otherwise -> Helper.splitStrBy '/' args'
             in
               case command of
                 "cd" -> do
